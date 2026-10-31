@@ -5,11 +5,11 @@ type FooterUi = Pick<ExtensionContext["ui"], "setStatus" | "theme">;
 
 const LEGACY_STATUS_KEYS = ["pi-reach:control", "pi-reach:owner-active", "pi-reach:session"] as const;
 const STATUS_PRESENTATION = {
-  connecting: { color: "dim", text: "连接中" },
-  connected: { color: "dim", text: "已连接" },
-  reconnecting: { color: "warning", text: "重连中" },
-  off: { color: "dim", text: "已关闭" },
-  failed: { color: "error", text: "启动失败" },
+  connecting: { color: "dim", text: "connecting" },
+  connected: { color: "dim", text: "connected" },
+  reconnecting: { color: "warning", text: "reconnecting" },
+  off: { color: "dim", text: "off" },
+  failed: { color: "error", text: "failed" },
 } satisfies Record<RelayDisplayStatus, { color: "warning" | "dim" | "error"; text: string }>;
 
 export function clearLegacyRelayStatuses(ui: FooterUi): void {
@@ -18,7 +18,7 @@ export function clearLegacyRelayStatuses(ui: FooterUi): void {
 
 export function renderRelayFooter(ui: FooterUi, displayStatus: RelayDisplayStatus): void {
   const { color, text } = STATUS_PRESENTATION[displayStatus];
-  const prefix = "Pi Reach · ";
+  const prefix = "Pi Reach - ";
   const status = color === "dim"
     ? ui.theme.fg("dim", prefix + text)
     : ui.theme.fg("dim", prefix) + ui.theme.fg(color, text);
