@@ -1,12 +1,19 @@
-# Extension GitHub Release：Extension 在 npm 上线后，基于 extension-vX.Y.Z 标签创建 GitHub Release（当前版本标记 Latest）。
-# - 背景：Extension npm 工作流（release.yml）提交待审并打标签后结束，维护者在 npmjs.com 批准的时刻 GitHub 无法感知，
-#   因此定时检查：当前版本已在 npm 上而 Release 缺失时创建；尚未批准时跳过，下次再查。
-# - 不创建标签：GITHUB_TOKEN 无法给 .github/workflows 与 main 最新提交不同的提交打标签。已上线但缺少标签时失败，
-#   由维护者手工打标签后重新运行。
-# - 触发：按计划每 30 分钟一次，但 GitHub 定时任务只尽力调度，实际可能延迟数小时或被跳过；也可在 Actions 页面
-#   手动运行，并可指定要补建的历史版本。
-# - 逻辑在 scripts/extension-github-release.sh。
-# 流程见 docs/DEPLOYMENT.md「版本标签与 GitHub Release」。
+# Extension GitHub Release: creates the GitHub Release for the Extension based on the
+# extension-vX.Y.Z tag once the version is available on GitHub Packages (the current version is
+# marked Latest).
+# - Background: the Extension publish workflow (release.yml) publishes to GitHub Packages and tags
+#   the commit, but does not create the Release. GitHub cannot observe the publish moment from a
+#   separate workflow, so this workflow checks on a schedule: when the current version is published
+#   on GitHub Packages and the Release is missing, it is created; otherwise it skips until the next
+#   run.
+# - No tag creation: GITHUB_TOKEN cannot tag a commit whose .github/workflows differ from the latest
+#   commit on main. Fails when a version is published but its tag is missing; tag manually and re-run.
+# - Trigger: every 30 minutes by schedule, but GitHub schedules are best-effort and may lag for hours
+#   or be skipped; scheduled workflows are also disabled on freshly imported forks until enabled once
+#   in the Actions page. Can be run manually from the Actions page, with an optional historical
+#   version to backfill.
+# - Logic lives in scripts/extension-github-release.sh.
+# Process: docs/DEPLOYMENT.md「版本标签与 GitHub Release」.
 name: Extension GitHub Release
 
 on:
@@ -15,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 要补建的历史版本（X.Y.Z），留空使用当前版本
+        description: Historical version to backfill (X.Y.Z); leave empty for the current version
         type: string
         required: false
 

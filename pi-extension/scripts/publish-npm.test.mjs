@@ -7,11 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const SCRIPT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "publish-npm.sh");
-const TOKEN = "npm-token-must-not-leak";
-const OIDC_ENV = {
-  ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.example.invalid/request",
-  ACTIONS_ID_TOKEN_REQUEST_TOKEN: "fake-request-token",
-};
+const TOKEN = "github-packages-token-must-not-leak";
 
 // Fake npm/pnpm: record every call and simulate a registry where 9.9.9 is not published yet.
 const FAKE_CLI = String.raw`#!/usr/bin/env node
@@ -31,13 +27,9 @@ const publishedMarker = path.join(state, "published");
 
 if (name === "pnpm" && args[0] === "verify") process.exit(0);
 if (name === "pnpm" && args[0] === "pack") {
-  const filename = path.join(args[args.indexOf("--pack-destination") + 1], "yefengr-pi-reach-9.9.9.tgz");
+  const filename = path.join(args[args.indexOf("--pack-destination") + 1], "pelrun-pi-reach-9.9.9.tgz");
   fs.writeFileSync(filename, "fake tarball");
   process.stdout.write(JSON.stringify({ filename, files: [{ path: "dist/index.js" }] }) + "\n");
-  process.exit(0);
-}
-if (name === "npm" && args[0] === "--version") {
-  process.stdout.write((process.env.FAKE_NPM_VERSION || "11.19.0") + "\n");
   process.exit(0);
 }
 if (name === "npm" && args[0] === "whoami") process.exit(process.env.FAKE_NPM_LOGGED_IN === "1" ? 0 : 1);
@@ -53,7 +45,6 @@ if (name === "npm" && args[0] === "publish") {
   fs.writeFileSync(publishedMarker, "");
   process.exit(0);
 }
-if (name === "npm" && args[0] === "stage" && args[1] === "publish") process.exit(0);
 process.stderr.write("unhandled fake command: " + name + " " + args.join(" ") + "\n");
 process.exit(90);
 `;
@@ -65,7 +56,7 @@ function makeFixture(t) {
   mkdirSync(fakeBin);
   mkdirSync(tmp);
   copyFileSync(SCRIPT, join(root, "publish-npm.sh"));
-  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "@yefengr/pi-reach", version: "9.9.9" }));
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "@pelrun/pi-reach", version: "9.9.9" }));
   writeFileSync(join(root, "calls.jsonl"), "");
   for (const command of ["npm", "pnpm"]) {
     writeFileSync(join(fakeBin, command), FAKE_CLI);
@@ -78,7 +69,7 @@ function makeFixture(t) {
 function run(fixture, args = [], extraEnv = {}) {
   const env = { ...process.env };
   // The real shell or CI job may carry credentials; each test sets its own authentication.
-  for (const key of ["NPM_TOKEN", "NPM_CONFIG_USERCONFIG", "npm_config_userconfig", ...Object.keys(OIDC_ENV)]) delete env[key];
+  for (const key of ["NODE_AUTH_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "NPM_CONFIG_USERCONFIG", "npm_config_userconfig"]) delete env[key];
   return spawnSync("/bin/bash", [join(fixture.root, "publish-npm.sh"), ...args], {
     encoding: "utf8",
     input: "",
@@ -98,69 +89,64 @@ function assertSucceeded(result) {
   assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
 }
 
-test("stages the inspected tarball through GitHub Actions OIDC without a token, login check or OTP prompt", (t) => {
+test("publishes the inspected tarball with NODE_AUTH_TOKEN through a temporary npmrc and confirms the version", (t) => {
   const fixture = makeFixture(t);
-  const result = run(fixture, ["--stage"], OIDC_ENV);
+  const result = run(fixture, [], { NODE_AUTH_TOKEN: TOKEN });
   assertSucceeded(result);
   const lines = commandLines(fixture);
-  const packDir = lines[3]?.split(" --pack-destination ")[1];
+  const packDir = lines[2]?.split(" --pack-destination ")[1];
   assert.ok(packDir?.startsWith(join(fixture.tmp, "pi-reach-pack.")), lines.join("\n"));
   assert.deepEqual(lines, [
-    "npm --version",
-    "npm view @yefengr/pi-reach@9.9.9 version --registry=https://registry.npmjs.org/",
+    "npm view @pelrun/pi-reach@9.9.9 version --registry=https://npm.pkg.github.com",
     "pnpm verify",
     `pnpm pack --json --pack-destination ${packDir}`,
-    `npm stage publish ${join(packDir, "yefengr-pi-reach-9.9.9.tgz")} --access public --ignore-scripts`,
+    `npm publish ${join(packDir, "pelrun-pi-reach-9.9.9.tgz")} --access public --ignore-scripts`,
+    "npm view @pelrun/pi-reach@9.9.9 version --registry=https://npm.pkg.github.com --prefer-online",
   ]);
-  assert.ok(calls(fixture).every((call) => call.npmrc === null));
-  assert.doesNotMatch(result.stdout, /OTP/);
-  assert.match(result.stdout, /已提交到 npm 待审区：@yefengr\/pi-reach@9\.9\.9/);
-  assert.deepEqual(readdirSync(fixture.tmp), [], "the pack directory is removed");
-});
-
-test("refuses to stage with an npm CLI older than 11.15.0", (t) => {
-  const fixture = makeFixture(t);
-  const result = run(fixture, ["--stage"], { ...OIDC_ENV, FAKE_NPM_VERSION: "11.14.2" });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /需要 npm 11\.15\.0 或更高版本，当前为 11\.14\.2/);
-  assert.deepEqual(commandLines(fixture), ["npm --version"]);
-});
-
-test("refuses to upload a version that already exists on npm", (t) => {
-  const fixture = makeFixture(t);
-  const result = run(fixture, ["--stage"], { ...OIDC_ENV, FAKE_ALREADY_PUBLISHED: "1" });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /@yefengr\/pi-reach@9\.9\.9 已存在/);
-  assert.ok(commandLines(fixture).every((line) => !line.startsWith("pnpm") && !line.startsWith("npm stage")));
-});
-
-test("requires an authenticated npm session without a token or OIDC", (t) => {
-  const fixture = makeFixture(t);
-  const result = run(fixture, ["--stage"]);
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /当前 npm 会话未认证/);
-  assert.deepEqual(commandLines(fixture), ["npm --version", "npm whoami --registry=https://registry.npmjs.org/"]);
-});
-
-test("publishes directly with NPM_TOKEN through a temporary npmrc and confirms the version", (t) => {
-  const fixture = makeFixture(t);
-  const result = run(fixture, [], { NPM_TOKEN: TOKEN, FAKE_NPM_LOGGED_IN: "1" });
-  assertSucceeded(result);
-  const upload = calls(fixture).find((call) => call.name === "npm" && call.args[0] === "publish");
-  assert.deepEqual(upload.args.slice(2), ["--access", "public", "--ignore-scripts"]);
-  assert.match(upload.npmrc, /^\/\/registry\.npmjs\.org\/:_authToken=\$\{NPM_TOKEN\}$/m);
+  const npmrc = calls(fixture).at(-1).npmrc;
+  assert.match(npmrc, /^@pelrun:registry=https:\/\/npm\.pkg\.github\.com$/m);
+  assert.match(npmrc, /^\/\/npm\.pkg\.github\.com\/:_authToken=\$\{NODE_AUTH_TOKEN\}$/m);
   for (const call of calls(fixture)) {
     assert.ok(!JSON.stringify(call).includes(TOKEN), "the token never reaches arguments or the npmrc file");
   }
-  assert.ok(!commandLines(fixture).some((line) => line.startsWith("npm stage")));
-  assert.match(result.stdout, /发布成功：@yefengr\/pi-reach@9\.9\.9/);
+  assert.match(result.stdout, /Publish succeeded: @pelrun\/pi-reach@9\.9\.9/);
   assert.deepEqual(readdirSync(fixture.tmp), [], "the temporary npmrc and pack directory are removed");
 });
 
-test("rejects unknown arguments before touching npm", (t) => {
+test("accepts GH_TOKEN and GITHUB_TOKEN as token sources", (t) => {
+  for (const key of ["GH_TOKEN", "GITHUB_TOKEN"]) {
+    const fixture = makeFixture(t);
+    const result = run(fixture, [], { [key]: TOKEN });
+    assertSucceeded(result);
+    assert.ok(commandLines(fixture).some((line) => line.startsWith("npm publish")), key);
+    for (const call of calls(fixture)) {
+      assert.ok(!JSON.stringify(call).includes(TOKEN), "the token never reaches arguments or the npmrc file");
+    }
+  }
+});
+
+test("requires an authenticated npm session without a token", (t) => {
   const fixture = makeFixture(t);
-  const result = run(fixture, ["--dry-run"]);
+  const result = run(fixture, []);
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /未知参数：--dry-run/);
-  assert.deepEqual(commandLines(fixture), []);
+  assert.match(result.stderr, /not authenticated to https:\/\/npm\.pkg\.github\.com/);
+  assert.deepEqual(commandLines(fixture), ["npm whoami --registry=https://npm.pkg.github.com"]);
+});
+
+test("refuses to upload a version that already exists on GitHub Packages", (t) => {
+  const fixture = makeFixture(t);
+  const result = run(fixture, [], { NODE_AUTH_TOKEN: TOKEN, FAKE_ALREADY_PUBLISHED: "1" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /@pelrun\/pi-reach@9\.9\.9 already exists/);
+  assert.ok(commandLines(fixture).every((line) => line.startsWith("npm view") || line.startsWith("npm whoami")));
+});
+
+test("rejects unknown arguments before touching npm", (t) => {
+  for (const arg of ["--dry-run", "--stage"]) {
+    const fixture = makeFixture(t);
+    const result = run(fixture, [arg]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, new RegExp(`unknown argument: ${arg}`));
+    assert.deepEqual(commandLines(fixture), []);
+  }
 });

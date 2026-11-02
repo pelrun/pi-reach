@@ -7,12 +7,12 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY pwa/package.json ./pwa/package.json
 COPY pi-extension/package.json ./pi-extension/package.json
 COPY packages/protocol/ ./packages/protocol/
-RUN corepack enable && pnpm --filter @yefengr/pi-reach... install --frozen-lockfile
+RUN corepack enable && pnpm --filter @pelrun/pi-reach... install --frozen-lockfile
 COPY pi-extension/src ./pi-extension/src
 COPY pi-extension/scripts ./pi-extension/scripts
 COPY pi-extension/index.js pi-extension/tsconfig.json pi-extension/README.md pi-extension/LICENSE ./pi-extension/
-RUN pnpm --filter @yefengr/pi-reach build \
-    && pnpm --filter @yefengr/pi-reach deploy --legacy /out/extension
+RUN pnpm --filter @pelrun/pi-reach build \
+    && pnpm --filter @pelrun/pi-reach deploy --legacy /out/extension
 
 # Pi 按发布清单加载入口，编译成功不代表 deploy 产物包含所有入口。
 RUN node -e '\

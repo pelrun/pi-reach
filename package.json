@@ -22,6 +22,6 @@
     "build": "pnpm --workspace-concurrency=1 -r build",
     "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm build",
     "verify:release": "pnpm verify && pnpm test:e2e",
-    "pack:extension": "pnpm --filter @yefengr/pi-reach pack"
+    "pack:extension": "pnpm --filter @pelrun/pi-reach pack"
   }
 }

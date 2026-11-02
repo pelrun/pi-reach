@@ -13,9 +13,19 @@ set -euo pipefail
 MIN_NODE="20.6.0"
 NODE_LTS="22"
 PI_PKG="@earendil-works/pi-coding-agent"
-PLUGIN_SPEC="npm:@yefengr/pi-reach"
+# The Extension is published to GitHub Packages of this repository; the npm scope must match the
+# repository owner. GitHub Packages requires authentication for every npm request, even for
+# public packages.
+PLUGIN_SPEC="npm:@pelrun/pi-reach"
+GPR_REGISTRY="https://npm.pkg.github.com"
+TEMP_NPMRC=""
 USER_PREFIX="$HOME/.local"
 LOCAL_BIN="$USER_PREFIX/bin"
+
+cleanup() {
+  [ -z "$TEMP_NPMRC" ] || rm -f "$TEMP_NPMRC"
+}
+trap cleanup EXIT
 
 if [ -t 1 ]; then
   BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GRN=$'\033[32m'
@@ -98,6 +108,29 @@ install_extension() {
   ok "installed Pi Reach Extension"
 }
 
+# pi installs npm packages by shelling out to the npm CLI, which honors NPM_CONFIG_USERCONFIG.
+# With a token from the environment, a temporary npmrc is written that only references the
+# variable, so the token value never lands on disk; otherwise an existing npm configuration for
+# npm.pkg.github.com is used as-is.
+configure_github_packages_auth() {
+  step "Configuring GitHub Packages authentication"
+  local token existing
+  token="${NODE_AUTH_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
+  if [ -n "$token" ]; then
+    TEMP_NPMRC="$(mktemp "${TMPDIR:-/tmp}/pi-reach-install-npmrc.XXXXXX")"
+    printf '@pelrun:registry=%s\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n' "$GPR_REGISTRY" > "$TEMP_NPMRC"
+    NODE_AUTH_TOKEN="$token"
+    export NODE_AUTH_TOKEN NPM_CONFIG_USERCONFIG="$TEMP_NPMRC"
+    ok "using the GitHub token from the environment"
+    return
+  fi
+  existing="$(npm config get //npm.pkg.github.com/:_authToken 2>/dev/null || true)"
+  case "$existing" in
+    ""|null|undefined) die "GitHub Packages needs authentication; export GH_TOKEN (a GitHub token with read:packages) or configure npm.pkg.github.com in ~/.npmrc, then re-run" ;;
+    *) ok "using the existing npm configuration for npm.pkg.github.com" ;;
+  esac
+}
+
 print_next_steps() {
   cat <<EOF
 
@@ -121,6 +154,7 @@ main() {
   ensure_local_bin_on_path
   ensure_node
   ensure_pi
+  configure_github_packages_auth
   install_extension
   print_next_steps
 }

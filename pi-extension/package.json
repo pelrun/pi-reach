@@ -1,5 +1,5 @@
 {
-  "name": "@yefengr/pi-reach",
+  "name": "@pelrun/pi-reach",
   "version": "0.0.19",
   "publishConfig": {
     "access": "public"
@@ -35,18 +35,18 @@
     "extensions": [
       "./index.js"
     ],
-    "image": "https://raw.githubusercontent.com/yefengr/pi-reach/main/docs/assets/screenshot-hero-en.png"
+    "image": "https://raw.githubusercontent.com/pelrun/pi-reach/main/docs/assets/screenshot-hero-en.png"
   },
   "author": "yefeng",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yefengr/pi-reach.git",
+    "url": "git+https://github.com/pelrun/pi-reach.git",
     "directory": "pi-extension"
   },
-  "homepage": "https://github.com/yefengr/pi-reach#readme",
+  "homepage": "https://github.com/pelrun/pi-reach#readme",
   "bugs": {
-    "url": "https://github.com/yefengr/pi-reach/issues"
+    "url": "https://github.com/pelrun/pi-reach/issues"
   },
   "files": [
     "index.js",

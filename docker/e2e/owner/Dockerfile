@@ -7,8 +7,8 @@ COPY pwa/package.json ./pwa/package.json
 COPY pi-extension/package.json ./pi-extension/package.json
 COPY packages/protocol/ ./packages/protocol/
 RUN corepack enable \
-    && pnpm --filter @yefengr/pi-reach... install --frozen-lockfile \
-    && pnpm --filter @yefengr/pi-reach deploy --legacy --prod /out/owner
+    && pnpm --filter @pelrun/pi-reach... install --frozen-lockfile \
+    && pnpm --filter @pelrun/pi-reach deploy --legacy --prod /out/owner
 
 FROM node:24.20.0-bookworm-slim
 

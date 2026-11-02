@@ -1,21 +1,25 @@
-# Extension npm：把 Extension（@yefengr/pi-reach）提交到 npm 待审区，维护者在 npmjs.com 用 2FA 批准后才上线。
-# - 触发：推送到 main 且 pi-extension/package.json 的 version 发生变化；也可在 Actions 页面手动运行（不比较版本号）。
-#   版本号未变（如只改依赖）或该版本已在 npm 上时跳过。
-# - 认证：npm trusted publishing（GitHub OIDC），仓库和 GitHub 中不保存 npm token。npm 侧的 trusted publisher
-#   绑定本文件名 release.yml，改名时同步修改 npm 设置。
-# - 上传：pi-extension/publish-npm.sh --stage 运行 Extension 的 verify、pnpm pack 与 tarball 检查后执行 npm stage publish。
-# - npm：使用 .node-version 对应 Node 附带的 npm，不在持有发布权限的作业里另装 npm。npm stage publish 需要
-#   npm 11.15.0 或更高版本，调整 Node 版本时确认其附带的 npm 满足要求；脚本开头也会检查并在不满足时立即失败。
-# - 标签：提交待审成功后由 tag 作业在本次提交上创建 extension-vX.Y.Z。GITHUB_TOKEN 没有 workflows 权限，只能给
-#   .github/workflows 与 main 最新提交一致的提交打标签，所以必须趁本次提交仍是最新时完成，不能等到 npm 批准后。
-#   tag 作业单独持有 contents: write，与持有 id-token: write 的 stage 作业分开。
-# - 上线后：GitHub Release 由 Extension GitHub Release 工作流（extension-github-release.yml）定时检查并创建。
-# 流程与一次性配置见 docs/DEPLOYMENT.md「Extension npm 发布」。
-name: Extension npm
+# Extension publish: publishes the Extension (@pelrun/pi-reach) to GitHub Packages (npm.pkg.github.com).
+# - Trigger: push to main when the version in pi-extension/package.json changes; can also be run
+#   manually from the Actions page (no version comparison).
+#   Skipped when the version is unchanged (e.g. dependency-only changes) or already published.
+# - Registry: GitHub Packages of this repository. The npm scope must match the repository owner,
+#   which is enforced by pi-extension/publish-npm.sh (@pelrun/pi-reach).
+# - Auth: the workflow GITHUB_TOKEN with packages:write; no tokens are stored in the repo or GitHub.
+#   GitHub Packages has no staging or approval step: the version goes live immediately after publish.
+# - Upload: pi-extension/publish-npm.sh runs the Extension verify, pnpm pack and tarball checks,
+#   then uploads the inspected tarball with npm publish.
+# - Tag: on success the tag job creates extension-vX.Y.Z on this commit. GITHUB_TOKEN has no
+#   workflows scope and may only tag commits whose .github/workflows match the latest commit on
+#   main, so tagging must happen while this commit is still the latest, not after later merges.
+#   The tag job holds contents: write separately from the packages: write publish job.
+# - After publish: the GitHub Release is created by the Extension GitHub Release workflow
+#   (extension-github-release.yml).
+# Process and details: docs/DEPLOYMENT.md「Extension GitHub Packages 发布」.
+name: Extension publish
 
 on:
   push:
-    branches: [main]
+    branches: [forked-extension]
     paths: [pi-extension/package.json]
   workflow_dispatch:
 
@@ -30,8 +34,8 @@ env:
   COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
 
 jobs:
-  stage:
-    name: stage
+  publish:
+    name: publish
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -39,18 +43,19 @@ jobs:
       version: ${{ steps.decide.outputs.version }}
     permissions:
       contents: read
-      id-token: write
+      packages: write
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Decide whether to release
+      - name: Decide whether to publish
         id: decide
         env:
           EVENT: ${{ github.event_name }}
           PUSH_BEFORE: ${{ github.event.before }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           skip() {
             echo "$1"
@@ -62,22 +67,32 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if [ "$EVENT" = push ] && git cat-file -e "$PUSH_BEFORE^{commit}" 2>/dev/null; then
             previous="$(git show "$PUSH_BEFORE:pi-extension/package.json" 2>/dev/null | jq -r .version 2>/dev/null || true)"
-            if [ "$previous" = "$version" ]; then skip "Extension 版本仍为 ${version}，跳过。"; fi
+            if [ "$previous" = "$version" ]; then skip "Extension version is still ${version}, skipping."; fi
           fi
-          status="$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/@yefengr%2fpi-reach/$version")"
+          # GitHub Packages requires authentication for every read, even for public packages,
+          # so the existence check fetches the authenticated packument and looks up the version.
+          status="$(curl -sS --retry 3 --max-time 30 -o "$RUNNER_TEMP/packument.json" -w '%{http_code}' \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://npm.pkg.github.com/@pelrun%2Fpi-reach")"
           case "$status" in
-            200) skip "@yefengr/pi-reach@$version 已在 npm 上，跳过。" ;;
+            200)
+              if jq -e --arg v "$version" '.versions | has($v)' "$RUNNER_TEMP/packument.json" >/dev/null; then
+                skip "@pelrun/pi-reach@$version is already published to GitHub Packages, skipping."
+              fi
+              ;;
             404) ;;
-            *) echo "无法确认 npm 上是否已有该版本（HTTP ${status}）。"; exit 1 ;;
+            *) echo "Cannot determine whether the version is already published to GitHub Packages (HTTP ${status})."; exit 1 ;;
           esac
           echo "release=true" >> "$GITHUB_OUTPUT"
 
       - uses: ./.github/actions/setup-workspace
         if: steps.decide.outputs.release == 'true'
 
-      - name: Stage on npm
+      - name: Publish to GitHub Packages
         if: steps.decide.outputs.release == 'true'
-        run: bash pi-extension/publish-npm.sh --stage
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: bash pi-extension/publish-npm.sh
 
       - name: Summary
         if: steps.decide.outputs.release == 'true'
@@ -85,15 +100,15 @@ jobs:
           VERSION: ${{ steps.decide.outputs.version }}
         run: |
           {
-            echo "### @yefengr/pi-reach@$VERSION 已提交到 npm 待审区"
+            echo "### @pelrun/pi-reach@$VERSION published to GitHub Packages"
             echo
-            echo "在 npmjs.com 的 Staged Packages 中核对并用 2FA 批准后才会上线。本版本依赖新的协议帧或事件时，批准前先确认 PWA 已部署。上线后 Extension GitHub Release 工作流会定时检查并创建 Release，通常在 30 分钟到数小时内完成；急需时可在 Actions 页面手动运行。"
+            echo "The version is available immediately from https://npm.pkg.github.com; there is no approval step. If this version depends on new protocol frames or events, confirm the PWA is deployed before pairing clients against it. The Extension GitHub Release workflow creates the GitHub Release on its next scheduled run (scheduled workflows are disabled on newly imported forks until enabled once in the Actions page; it can also be run manually)."
           } >> "$GITHUB_STEP_SUMMARY"
 
   tag:
     name: tag
-    needs: stage
-    if: needs.stage.outputs.release == 'true'
+    needs: publish
+    if: needs.publish.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -104,8 +119,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Tag staged commit
+      - name: Tag published commit
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.stage.outputs.version }}
+          VERSION: ${{ needs.publish.outputs.version }}
         run: bash scripts/extension-github-release.sh tag "$VERSION" "$GITHUB_SHA"
