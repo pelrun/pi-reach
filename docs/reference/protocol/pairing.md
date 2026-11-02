@@ -28,6 +28,8 @@ Extension 生成八位 Crockford Base32 配对码，显示为 ASCII QR 和文字
 }
 ```
 
+`expires_at` 由 Extension 按本机时钟写入绝对时间戳；Relay 不要求两端时钟同步，也不因时间戳超出上限而拒绝 offer。真实到期取主机声明时间戳与 Relay 接收窗口（收到 offer 起本机时钟 300 秒）中较早者，因此主机时钟偏差只会让配对码早于界面显示时间失效，不会延长有效期。
+
 PWA 完成 Owner hello/auth 后发送：
 
 ```json

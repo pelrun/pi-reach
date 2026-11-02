@@ -152,16 +152,19 @@ export class PeerRegistry {
     this.removeExpiredOffers(now);
     const host = this.endpoints.get(endpointKey(deviceId, endpointId));
     if (host?.connId !== connId || host.runtimeInstanceId !== offer.runtimeInstanceId) return false;
-    if (offer.endpointId !== endpointId || compareExactInteger(offer.expiresAt, now + PAIR_TTL_MAX_MS) > 0) return false;
+    if (offer.endpointId !== endpointId) return false;
     const collision = this.pairingOffers.get(offer.code);
     if (collision !== undefined && (collision.deviceId !== deviceId || collision.endpointId !== endpointId)) return false;
     this.removeOffersForEndpoint(deviceId, endpointId);
+    // 到期取主机声明时间戳与 Relay 接收窗口（本机时钟 + TTL 上限）中较早者：
+    // 超出上限的时间戳不再被拒绝，主机时钟偏差只会让配对提前失效，不会绕过上限。
+    const windowExpiry = now + PAIR_TTL_MAX_MS;
     this.pairingOffers.set(offer.code, {
       deviceId,
       endpointId: offer.endpointId,
       runtimeInstanceId: offer.runtimeInstanceId,
       connId,
-      expiresAt: offer.expiresAt,
+      expiresAt: compareExactInteger(offer.expiresAt, windowExpiry) <= 0 ? offer.expiresAt : windowExpiry,
     });
     return true;
   }

@@ -130,10 +130,13 @@ describe("PeerRegistry", () => {
     expect(registry.resolvePairingCode(owner, ownerConn, { requestId: "reset", code: "UNKNOWN1" })).toBe("unknown_code");
   });
 
-  it("accepts shared default and bounds but rejects a longer pairing offer", () => {
-    const now = 20_000;
+  it("caps an over-bound pairing offer at the relay window and honours an earlier host expiry", () => {
+    let now = 20_000;
     const registry = new PeerRegistry(() => now);
     const device = identity(5);
+    const owner = identity(6);
+    const ownerSink = sink();
+    const ownerConn = registry.registerOwner(owner, ownerSink);
     const hostConn = registry.registerHost(host(device, RUNTIME_A, []), sink());
 
     for (const [code, ttlMs] of [
@@ -146,9 +149,25 @@ describe("PeerRegistry", () => {
       })).toBe(true);
     }
 
+    // 超出上限的时间戳不被拒绝，而是按 Relay 接收窗口到期。
     expect(registry.publishPairingOffer(device, ENDPOINT_ID, hostConn, {
-      code: "AAAA0004", endpointId: ENDPOINT_ID, runtimeInstanceId: RUNTIME_A, expiresAt: now + PAIR_TTL_MAX_MS + 1,
-    })).toBe(false);
+      code: "AAAA0004", endpointId: ENDPOINT_ID, runtimeInstanceId: RUNTIME_A, expiresAt: now + PAIR_TTL_MAX_MS + 86_400_000,
+    })).toBe(true);
+    now += PAIR_TTL_MAX_MS - 1;
+    expect(registry.resolvePairingCode(owner, ownerConn, { requestId: "within", code: "AAAA0004" })).toBe("resolved");
+    ownerSink.frames.pop();
+
+    // 更早的主机时间戳先生效；已过去的时间戳立即到期。
+    expect(registry.publishPairingOffer(device, ENDPOINT_ID, hostConn, {
+      code: "AAAA0005", endpointId: ENDPOINT_ID, runtimeInstanceId: RUNTIME_A, expiresAt: now + 30_000,
+    })).toBe(true);
+    now += 30_000;
+    expect(registry.resolvePairingCode(owner, ownerConn, { requestId: "host-expired", code: "AAAA0005" })).toBe("expired_code");
+    ownerSink.frames.pop();
+    expect(registry.publishPairingOffer(device, ENDPOINT_ID, hostConn, {
+      code: "AAAA0006", endpointId: ENDPOINT_ID, runtimeInstanceId: RUNTIME_A, expiresAt: now - 1_000,
+    })).toBe(true);
+    expect(registry.resolvePairingCode(owner, ownerConn, { requestId: "stale", code: "AAAA0006" })).toBe("expired_code");
   });
 
   it("keeps broadcasting when an earlier owner unregisters synchronously", () => {
