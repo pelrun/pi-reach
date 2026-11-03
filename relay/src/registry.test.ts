@@ -156,6 +156,9 @@ describe("PeerRegistry", () => {
     now += PAIR_TTL_MAX_MS - 1;
     expect(registry.resolvePairingCode(owner, ownerConn, { requestId: "within", code: "AAAA0004" })).toBe("resolved");
     ownerSink.frames.pop();
+    now += 1;
+    expect(registry.resolvePairingCode(owner, ownerConn, { requestId: "window-expired", code: "AAAA0004" })).toBe("expired_code");
+    expect(ownerSink.frames.pop()).toMatchObject({ in_reply_to: "window-expired", reason: "expired_code" });
 
     // 更早的主机时间戳先生效；已过去的时间戳立即到期。
     expect(registry.publishPairingOffer(device, ENDPOINT_ID, hostConn, {
